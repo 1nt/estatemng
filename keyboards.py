@@ -14,6 +14,7 @@ resident_menu = ReplyKeyboardMarkup(
 specialist_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🧰 Мои заявки")],
+        [KeyboardButton(text="🔄 Изменить статус заявки")],
         [KeyboardButton(text="🔍 Проверить статус заявки")],
         [KeyboardButton(text="ℹ️ Справочная информация")]
     ],
@@ -24,6 +25,7 @@ specialist_menu = ReplyKeyboardMarkup(
 manager_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="➕ Назначить специалиста")],
+        [KeyboardButton(text="📋 Все заявки")],
         [KeyboardButton(text="✍️ Сообщить о проблеме")],
         [KeyboardButton(text="🔍 Проверить статус заявки")],
         [KeyboardButton(text="ℹ️ Справочная информация")]
@@ -56,3 +58,18 @@ mod_problem_type_kb = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="Не работает лифт", callback_data="mod_pt_Не работает лифт")],
     [InlineKeyboardButton(text="Другое", callback_data="mod_pt_Другое")]
 ])
+
+# --- Клавиатура для смены статуса заявки ---
+status_change_kb = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="Взята в работу", callback_data="status_in_progress")],
+    [InlineKeyboardButton(text="Выполнено", callback_data="status_completed")],
+    [InlineKeyboardButton(text="Проблема не выявлена", callback_data="status_not_found")]
+])
+
+# --- Главное меню (общее) ---
+main_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="🏠 Главное меню")]
+    ],
+    resize_keyboard=True
+)

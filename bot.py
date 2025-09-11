@@ -34,7 +34,6 @@ async def main():
     
     # Удаляем вебхук, если он был установлен ранее
     await bot.delete_webhook(drop_pending_updates=True)
-    
     # Проставим роли модераторов из .env, если их еще нет
     moderators = os.getenv("MODERATORS", "")
     if moderators:

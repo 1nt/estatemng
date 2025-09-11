@@ -34,6 +34,7 @@ class Ticket(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     resident_id = Column(Integer, ForeignKey('users.telegram_id'))
     specialist_id = Column(Integer, ForeignKey('users.telegram_id'), nullable=True)
+    responsible_specialist_id = Column(Integer, ForeignKey('users.telegram_id'), nullable=True)
     
     location_queue = Column(String)
     location_entrance = Column(String)
@@ -41,6 +42,10 @@ class Ticket(Base):
     problem_type = Column(String)
     description = Column(String)
     photo_id = Column(String, nullable=True)
+    
+    # Поля для завершения заявки
+    completion_comment = Column(String, nullable=True)
+    completion_photo_id = Column(String, nullable=True)
     
     status = Column(String, default='Новая')
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -118,6 +123,11 @@ async def find_user_by_username(username: str):
         result = await session.execute(select(User).where(User.username == username))
         return result.scalars().first()
 
+async def find_user_by_telegram_id(telegram_id: int):
+    async with SessionLocal() as session:
+        result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+        return result.scalars().first()
+
 async def add_specialist_for_problem(problem_type: str, specialist_username: str):
     async with SessionLocal() as session:
         # ensure uniqueness
@@ -149,6 +159,30 @@ async def get_open_tickets_for_specialist_username(specialist_username: str):
             return []
         result = await session.execute(select(Ticket).where(Ticket.problem_type.in_(assignments)))
         return list(result.scalars().all())
+
+async def get_all_tickets():
+    """Получить все заявки для модераторов"""
+    async with SessionLocal() as session:
+        result = await session.execute(select(Ticket).order_by(Ticket.created_at.desc()))
+        return list(result.scalars().all())
+
+async def update_ticket_status(ticket_id: int, status: str, responsible_specialist_id: int = None, completion_comment: str = None, completion_photo_id: str = None):
+    """Обновить статус заявки и назначить ответственного специалиста"""
+    async with SessionLocal() as session:
+        result = await session.execute(select(Ticket).where(Ticket.id == ticket_id))
+        ticket = result.scalars().first()
+        if ticket:
+            ticket.status = status
+            if responsible_specialist_id:
+                ticket.responsible_specialist_id = responsible_specialist_id
+            if completion_comment:
+                ticket.completion_comment = completion_comment
+            if completion_photo_id:
+                ticket.completion_photo_id = completion_photo_id
+            ticket.updated_at = datetime.utcnow()
+            await session.commit()
+            await session.refresh(ticket)
+        return ticket
 
 # Для демонстрации создадим и асинхронно запустим создание таблиц
 if __name__ == '__main__':
