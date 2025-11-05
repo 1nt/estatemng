@@ -47,6 +47,11 @@ class Ticket(Base):
     completion_comment = Column(String, nullable=True)
     completion_photo_id = Column(String, nullable=True)
     
+    # Поля для отслеживания работы над заявкой
+    taken_at = Column(DateTime, nullable=True)  # Дата когда взята в работу
+    estimated_days = Column(Integer, nullable=True)  # Количество дней на выполнение
+    completed_at = Column(DateTime, nullable=True)  # Дата выполнения
+    
     status = Column(String, default='Новая')
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -166,7 +171,7 @@ async def get_all_tickets():
         result = await session.execute(select(Ticket).order_by(Ticket.created_at.desc()))
         return list(result.scalars().all())
 
-async def update_ticket_status(ticket_id: int, status: str, responsible_specialist_id: int = None, completion_comment: str = None, completion_photo_id: str = None):
+async def update_ticket_status(ticket_id: int, status: str, responsible_specialist_id: int = None, completion_comment: str = None, completion_photo_id: str = None, estimated_days: int = None):
     """Обновить статус заявки и назначить ответственного специалиста"""
     async with SessionLocal() as session:
         result = await session.execute(select(Ticket).where(Ticket.id == ticket_id))
@@ -179,6 +184,14 @@ async def update_ticket_status(ticket_id: int, status: str, responsible_speciali
                 ticket.completion_comment = completion_comment
             if completion_photo_id:
                 ticket.completion_photo_id = completion_photo_id
+            if estimated_days is not None:
+                ticket.estimated_days = estimated_days
+            # Если статус "Взята в работу", сохраняем дату взятия
+            if status == 'Взята в работу' and not ticket.taken_at:
+                ticket.taken_at = datetime.utcnow()
+            # Если статус "Выполнено", сохраняем дату выполнения
+            if status == 'Выполнено' and not ticket.completed_at:
+                ticket.completed_at = datetime.utcnow()
             ticket.updated_at = datetime.utcnow()
             await session.commit()
             await session.refresh(ticket)

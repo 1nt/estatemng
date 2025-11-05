@@ -35,6 +35,7 @@ class ModAssignState(StatesGroup):
 class StatusChangeState(StatesGroup):
     choosing_ticket = State()
     choosing_status = State()
+    estimated_days = State()  # Для ввода количества дней при взятии в работу
     completion_comment = State()
     completion_photo = State()
 
@@ -366,8 +367,16 @@ async def status_changed(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Неверный статус", show_alert=True)
         return
     
+    # Если статус "Взята в работу", запрашиваем количество дней
+    if new_status == 'Взята в работу':
+        await state.update_data(new_status=new_status)
+        await state.set_state(StatusChangeState.estimated_days)
+        await callback.message.edit_text(
+            f"Заявка #{ticket_id} будет взята в работу.\n\n"
+            f"Введите количество дней на выполнение (или 0, если неизвестно):"
+        )
     # Если статус "Выполнено", запрашиваем комментарий и фото
-    if new_status == 'Выполнено':
+    elif new_status == 'Выполнено':
         await state.update_data(new_status=new_status)
         await state.set_state(StatusChangeState.completion_comment)
         await callback.message.edit_text(
@@ -387,6 +396,42 @@ async def status_changed(callback: CallbackQuery, state: FSMContext):
             await callback.message.edit_text("Ошибка при обновлении статуса.")
         
         await state.clear()
+
+@router.message(StatusChangeState.estimated_days)
+async def estimated_days_received(message: Message, state: FSMContext):
+    """Обработчик ввода количества дней на выполнение"""
+    data = await state.get_data()
+    ticket_id = data.get('selected_ticket_id')
+    new_status = data.get('new_status')
+    
+    if not message.text or not message.text.isdigit():
+        await message.answer("Пожалуйста, введите число (количество дней, или 0 если неизвестно):")
+        return
+    
+    estimated_days = int(message.text)
+    if estimated_days < 0:
+        await message.answer("Количество дней не может быть отрицательным. Введите число (или 0):")
+        return
+    
+    # Обновляем заявку со статусом и количеством дней
+    updated_ticket = await db.update_ticket_status(
+        ticket_id, 
+        new_status, 
+        message.from_user.id,
+        estimated_days=estimated_days
+    )
+    
+    if updated_ticket:
+        days_text = f"{estimated_days} дней" if estimated_days > 0 else "неизвестно"
+        await message.answer(
+            f"✅ Заявка #{ticket_id} взята в работу!\n"
+            f"Срок выполнения: {days_text}\n"
+            f"Ответственный специалист: @{message.from_user.username or message.from_user.full_name}"
+        )
+    else:
+        await message.answer("Ошибка при обновлении статуса заявки.")
+    
+    await state.clear()
 
 @router.message(StatusChangeState.completion_comment)
 async def completion_comment_received(message: Message, state: FSMContext):
@@ -509,9 +554,19 @@ async def process_ticket_id(message: Message, state: FSMContext):
             f"{responsible_info}"
         )
         
+        # Добавляем информацию о взятии в работу, если есть
+        if ticket.taken_at:
+            response += f"\n<b>Дата взятия в работу:</b> {ticket.taken_at.strftime('%d.%m.%Y %H:%M')}"
+            if ticket.estimated_days is not None:
+                days_text = f"{ticket.estimated_days} дней" if ticket.estimated_days > 0 else "неизвестно"
+                response += f"\n<b>Срок выполнения:</b> {days_text}"
+        
         # Добавляем информацию о завершении, если заявка выполнена
-        if ticket.status == 'Выполнено' and ticket.completion_comment:
-            response += f"\n\n<b>Комментарий специалиста:</b>\n{ticket.completion_comment}"
+        if ticket.status == 'Выполнено':
+            if ticket.completed_at:
+                response += f"\n<b>Дата выполнения:</b> {ticket.completed_at.strftime('%d.%m.%Y %H:%M')}"
+            if ticket.completion_comment:
+                response += f"\n\n<b>Комментарий специалиста:</b>\n{ticket.completion_comment}"
         
         await message.answer(response, parse_mode="HTML")
         
