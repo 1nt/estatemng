@@ -73,3 +73,16 @@ main_menu = ReplyKeyboardMarkup(
     ],
     resize_keyboard=True
 )
+
+# --- Инлайн-кнопки пропуска шагов ---
+skip_ticket_photo_kb = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="Пропустить", callback_data="skip_ticket_photo")]
+])
+
+skip_comment_kb = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="Пропустить", callback_data="skip_comment")]
+])
+
+skip_completion_photo_kb = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="Пропустить", callback_data="skip_completion_photo")]
+])

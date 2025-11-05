@@ -164,21 +164,30 @@ async def mod_set_role(message: Message):
         await message.answer("Команда доступна только модераторам.")
         return
 
-    # Формат: /mod_set_role <username> <resident|specialist|manager>
+    # Формат: /mod_set_role <username|telegram_id> <resident|specialist|manager>
     args = (message.text or "").split(maxsplit=2)
     if len(args) < 3:
-        await message.answer("Использование: /mod_set_role <username> <resident|specialist|manager>")
+        await message.answer("Использование: /mod_set_role <username|telegram_id> <resident|specialist|manager>")
         return
-    username = args[1].strip().lstrip('@')
+    target = args[1].strip()
     role = args[2].strip()
     if role not in {"resident", "specialist", "manager"}:
         await message.answer("Недопустимая роль.")
         return
-    user = await db.set_user_role_by_username(username, role)
-    if user:
-        await message.answer(f"Роль @{username} изменена на {role}.")
+    user = None
+    if target.isdigit():
+        user = await db.set_user_role_by_telegram_id(int(target), role)
+        if user:
+            await message.answer(f"Роль ID {target} изменена на {role}.")
+        else:
+            await message.answer("Пользователь с таким ID ещё не писал боту. Роль будет применена после первого сообщения.")
     else:
-        await message.answer("Пользователь ещё не писал боту. Роль будет применена после первого сообщения.")
+        username = target.lstrip('@')
+        user = await db.set_user_role_by_username(username, role)
+        if user:
+            await message.answer(f"Роль @{username} изменена на {role}.")
+        else:
+            await message.answer("Пользователь ещё не писал боту. Роль будет применена после первого сообщения.")
 
 @router.message(F.text == "ℹ️ Справочная информация")
 async def info_handler(message: Message):
@@ -272,19 +281,34 @@ async def manager_all_tickets(message: Message):
         return
     tickets = await db.get_all_tickets()
     if tickets:
-        text_lines = ["Все заявки в системе:"]
-        for t in tickets[:20]:  # Показываем последние 20 заявок
+        parts = ["Все заявки в системе:"]
+        for t in tickets[:20]:
             responsible = ""
             if t.responsible_specialist_id:
                 responsible_user = await db.find_user_by_telegram_id(t.responsible_specialist_id)
                 responsible_username = responsible_user.username if responsible_user else f"ID:{t.responsible_specialist_id}"
-                responsible = f" (Ответственный: @{responsible_username})"
-            text_lines.append(f"#{t.id} • {t.problem_type} • {t.status} • {t.created_at.strftime('%d.%m %H:%M')}{responsible}")
-        await message.answer("\n".join(text_lines))
+                responsible = f"\n<b>Ответственный:</b> @{responsible_username}"
+            details = (
+                f"<b>#{t.id}</b> • {t.problem_type} • {t.status}\n"
+                f"<b>Создана:</b> {t.created_at.strftime('%d.%m.%Y %H:%M')}"
+            )
+            if getattr(t, 'taken_at', None):
+                details += f"\n<b>Взята в работу:</b> {t.taken_at.strftime('%d.%m.%Y %H:%M')}"
+            if getattr(t, 'estimated_days', None) is not None:
+                days_text = f"{t.estimated_days} дней" if t.estimated_days and t.estimated_days > 0 else "неизвестно"
+                details += f"\n<b>Срок выполнения:</b> {days_text}"
+            if getattr(t, 'completed_at', None):
+                details += f"\n<b>Выполнена:</b> {t.completed_at.strftime('%d.%m.%Y %H:%M')}"
+            details += responsible
+            parts.append(details)
+        await message.answer("\n\n".join(parts), parse_mode="HTML")
         # Отправим фото по заявкам, если они есть
         for t in tickets[:20]:
             if getattr(t, 'photo_id', None):
-                caption = f"#{t.id} • {t.problem_type} • {t.status} • {t.created_at.strftime('%d.%m %H:%M') }"
+                caption = (
+                    f"#{t.id} • {t.problem_type} • {t.status}\n"
+                    f"Создана: {t.created_at.strftime('%d.%m.%Y %H:%M')}"
+                )
                 try:
                     await message.answer_photo(t.photo_id, caption=caption)
                 except Exception:
@@ -381,7 +405,8 @@ async def status_changed(callback: CallbackQuery, state: FSMContext):
         await state.set_state(StatusChangeState.completion_comment)
         await callback.message.edit_text(
             f"Заявка #{ticket_id} будет помечена как выполненная.\n\n"
-            f"Добавьте комментарий о выполненной работе (или отправьте 'Пропустить'):"
+            f"Добавьте комментарий о выполненной работе или нажмите Пропустить:",
+            reply_markup=kb.skip_comment_kb
         )
     else:
         # Для других статусов обновляем сразу
@@ -439,14 +464,15 @@ async def completion_comment_received(message: Message, state: FSMContext):
     ticket_id = data.get('selected_ticket_id')
     new_status = data.get('new_status')
     
-    comment = message.text if message.text != 'Пропустить' else None
+    comment = message.text
     await state.update_data(completion_comment=comment)
     await state.set_state(StatusChangeState.completion_photo)
-    
     await message.answer(
         f"Комментарий сохранен.\n\n"
-        f"Теперь прикрепите фото выполненной работы (или отправьте любое сообщение, чтобы пропустить):"
+        f"Теперь прикрепите фото выполненной работы или нажмите Пропустить:",
+        reply_markup=kb.main_menu
     )
+    await message.answer("Вы можете пропустить фото:", reply_markup=kb.skip_completion_photo_kb)
 
 @router.message(StatusChangeState.completion_photo)
 async def completion_photo_received(message: Message, state: FSMContext):
@@ -640,13 +666,20 @@ async def problem_chosen(callback: CallbackQuery, state: FSMContext):
         problem_text = problem_text_map.get(callback.data, 'Неизвестная проблема')
         await state.update_data(problem_type=problem_text, description=problem_text)
         await state.set_state(TicketState.uploading_photo)
-        await callback.message.edit_text("Прикрепите фотографию проблемы или нажмите 'Пропустить'.")
+        await callback.message.edit_text(
+            "Прикрепите фотографию проблемы или нажмите Пропустить.",
+            reply_markup=kb.skip_ticket_photo_kb
+        )
 
 @router.message(TicketState.typing_description)
 async def description_typed(message: Message, state: FSMContext):
     await state.update_data(description=message.text)
     await state.set_state(TicketState.uploading_photo)
-    await message.answer("Отлично. Теперь прикрепите фотографию проблемы или отправьте любое сообщение, чтобы пропустить этот шаг.")
+    await message.answer(
+        "Отлично. Теперь прикрепите фотографию проблемы или нажмите Пропустить.",
+        reply_markup=kb.main_menu
+    )
+    await message.answer("Вы можете пропустить фото:", reply_markup=kb.skip_ticket_photo_kb)
 
 @router.message(TicketState.uploading_photo)
 async def photo_uploaded(message: Message, state: FSMContext):
@@ -711,4 +744,98 @@ async def photo_uploaded(message: Message, state: FSMContext):
         reply_markup=kb.main_menu
     )
     
+    await state.clear()
+
+@router.callback_query(F.data == 'skip_ticket_photo', TicketState.uploading_photo)
+async def skip_ticket_photo(callback: CallbackQuery, state: FSMContext):
+    # Пропуск фото при создании заявки
+    await state.update_data(photo_id=None)
+    data = await state.get_data()
+    ticket_data_for_db = {
+        'resident_id': callback.from_user.id,
+        'location_queue': data.get('queue'),
+        'location_entrance': data.get('entrance'),
+        'location_floor': data.get('floor'),
+        'problem_type': data.get('problem_type'),
+        'description': data.get('description'),
+        'photo_id': None
+    }
+    new_ticket = await db.add_new_ticket(ticket_data_for_db)
+    specialists = await db.list_specialists_for_problem(new_ticket.problem_type)
+    if specialists:
+        mentions = ", ".join([f"@{s.specialist_username}" for s in specialists])
+        await callback.message.answer(
+            f"🔔 Новый тикет #{new_ticket.id} ({new_ticket.problem_type}). Специалисты: {mentions}"
+        )
+        for s in specialists:
+            specialist_user = await db.find_user_by_username(s.specialist_username)
+            if specialist_user and specialist_user.telegram_id:
+                try:
+                    caption = (
+                        f"🔔 Вам назначен новый тикет #{new_ticket.id}\n"
+                        f"Тип: {new_ticket.problem_type}\n"
+                        f"Описание: {new_ticket.description}"
+                    )
+                    await callback.message.bot.send_message(
+                        chat_id=specialist_user.telegram_id,
+                        text=caption
+                    )
+                except Exception:
+                    pass
+    await callback.message.answer(
+        f"✅ Ваша заявка принята! \n\n"
+        f"Номер вашей заявки: <b>{new_ticket.id}</b>\n\n"
+        "Вы можете отследить её статус в главном меню.",
+        parse_mode="HTML",
+        reply_markup=kb.main_menu
+    )
+    await state.clear()
+
+@router.callback_query(F.data == 'skip_comment', StatusChangeState.completion_comment)
+async def skip_completion_comment(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(completion_comment=None)
+    await state.set_state(StatusChangeState.completion_photo)
+    await callback.message.edit_text(
+        "Теперь прикрепите фото выполненной работы или нажмите Пропустить:",
+        reply_markup=kb.skip_completion_photo_kb
+    )
+
+@router.callback_query(F.data == 'skip_completion_photo', StatusChangeState.completion_photo)
+async def skip_completion_photo(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    ticket_id = data.get('selected_ticket_id')
+    new_status = data.get('new_status')
+    comment = data.get('completion_comment')
+    updated_ticket = await db.update_ticket_status(
+        ticket_id,
+        new_status,
+        callback.from_user.id,
+        comment,
+        None
+    )
+    if updated_ticket:
+        try:
+            resident_user = await db.find_user_by_telegram_id(updated_ticket.resident_id)
+            if resident_user:
+                notification_text = (
+                    f"🔔 <b>Заявка #{ticket_id} выполнена!</b>\n\n"
+                    f"<b>Проблема:</b> {updated_ticket.problem_type}\n"
+                    f"<b>Статус:</b> {new_status}\n"
+                    f"<b>Ответственный:</b> @{callback.from_user.username or callback.from_user.full_name}\n"
+                )
+                if comment:
+                    notification_text += f"\n<b>Комментарий специалиста:</b>\n{comment}"
+                await callback.message.bot.send_message(
+                    chat_id=updated_ticket.resident_id,
+                    text=notification_text,
+                    parse_mode="HTML"
+                )
+        except Exception:
+            pass
+        await callback.message.edit_text(
+            f"✅ Заявка #{ticket_id} успешно выполнена!\n"
+            f"Создатель заявки получил уведомление."
+        )
+    else:
+        await callback.message.edit_text("Ошибка при обновлении заявки.")
     await state.clear()
