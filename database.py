@@ -156,13 +156,24 @@ async def list_specialists_for_problem(problem_type: str):
         return list(result.scalars().all())
 
 async def get_open_tickets_for_specialist_username(specialist_username: str):
-    # Найти типы проблем для специалиста и вернуть заявки в статусах "Новая" или "В работе"
+    # Найти типы проблем для специалиста и вернуть заявки только в статусах "Новая" и "Взята в работу"
     async with SessionLocal() as session:
-        assignments_result = await session.execute(select(SpecialistAssignment).where(SpecialistAssignment.specialist_username == specialist_username))
+        assignments_result = await session.execute(
+            select(SpecialistAssignment).where(
+                SpecialistAssignment.specialist_username == specialist_username
+            )
+        )
         assignments = [a.problem_type for a in assignments_result.scalars().all()]
         if not assignments:
             return []
-        result = await session.execute(select(Ticket).where(Ticket.problem_type.in_(assignments)))
+        result = await session.execute(
+            select(Ticket)
+            .where(
+                (Ticket.problem_type.in_(assignments)) &
+                (Ticket.status.in_(["Новая", "Взята в работу"]))
+            )
+            .order_by(Ticket.created_at.desc())
+        )
         return list(result.scalars().all())
 
 async def get_all_tickets():

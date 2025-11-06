@@ -192,14 +192,43 @@ async def mod_set_role(message: Message):
 @router.message(F.text == "ℹ️ Справочная информация")
 async def info_handler(message: Message):
     info_text = (
-        "<b>Справочная информация:</b>\n\n"
-        "📞 <b>Телефон УК:</b> +7 (XXX) XXX-XX-XX\n"
-        "📧 <b>Почта УК:</b> support@uk-email.com\n\n"
-        "<b>Аварийные службы:</b>\n"
-        "🚨 <b>Общая аварийная:</b> 112\n"
-        "💧 <b>Водоснабжение:</b> +7 (XXX) XXX-XX-XY\n"
-        "⚡️ <b>Электроснабжение:</b> +7 (XXX) XXX-XX-XZ\n"
-        "🛗 <b>Лифты:</b> +7 (XXX) XXX-XX-XW"
+        "<b>КОНТАКТНАЯ ИНФОРМАЦИЯ</b>\n"
+        "УК «Сиди Дома»\n"
+        "🏠г. Тула, ул. Седова, д. 26 к. 1, помещение 769, офис 5 (вход со двора)\n"
+        "📧Эл.почта: sididoma71@yandex.ru\n"
+        "☎️Заместитель Директора \n"
+        "8-(993)-537-17-07 пн. – пт. (с 9:00 до 18:00);\n"
+        "☎️Директор инженерной службы 8-(933)-031-53-99 пн. – пт.  (с 9:00 до 18:00);\n\n"
+        "<b>КОНСЬЕРЖ (Аварийная служба) - Круглосуточно:</b>\n"
+        "<b>Корпус 1:</b>\n"
+        "☎️ 8-(915)-696-74-22 секция 1;\n"
+        "☎️ 8-(902)-901-06-92 секция 2.\n"
+        "<b>Корпус 2:</b>\n"
+        "☎️ 8-(902)-847-79-29 секция 1;\n"
+        "☎️ 8-(902)-846-73-31 секция 2.\n\n"
+        "<b>ОХРАНА – Круглосуточно:</b>\n"
+        "☎️ 8-(902)-750-08-63 - Охрана корпус 1; \n"
+        "☎️ 8-(953)-182-07-85 - Охрана корпус 2.\n\n"
+        "<b>МТС</b>\n"
+        "☎️Подключение сети интернет-менеджер компании МТС по ЖК «Фамилия»:\n"
+        "8-953-190-38-11- (с 9:00 до 18:00).\n"
+        "☎️Система контроля и управления доступом (домофоны/шлагбаумы):\n"
+        "Направление информации ТОЛЬКО WA/TG\n"
+        "8-(993)-537-93-90 - пн. – пт. (с 9:00 до 18:00).\n\n"
+        "<b>ООО «Лифт»</b>\n"
+        "☎️диспетчерская 8(4872)50‒03‒92 – Круглосуточно.\n\n"
+        "<b>АО «Тулагорводоканал»</b>\n"
+        "☎️ 8(4872)25-49-47, 42-53-34, 42-53-26 – Круглосуточно.\n\n"
+        "<b>АО «ТНС энерго Тула»</b>\n"
+        "☎️ 8-800-775-44-71 – Круглосуточно.\n\n"
+        "<b>ОЕИРЦ</b>\n"
+        "☎️ 8(4872)70-15-33, 70-15-34, 70-55-70 (доб.1020) - пн. – пт. (с 9:00 до 18:00)\n\n"
+        "<b>Отдел полиции по привокзальному району УМВД России г. Тула:</b>\n"
+        "☎️ 8(4872)32-47-00, 32-47-02, 39-00-79 – Круглосуточно.\n\n"
+        "<b>Администрация Привокзального района</b>\n"
+        "☎️ 8(4872)22-44-24, 22-44-66 - пн. – пт. (с 9:00 до 18:00).\n\n"
+        "<b>Государственная жилищная инспекция Тульской области</b>\n"
+        "☎️ 8(4872)24-51-60, 24-51-63 пн. – пт. (с 9:00 до 18:00)."
     )
     await message.answer(info_text, parse_mode="HTML")
 
@@ -331,15 +360,58 @@ async def change_status_start(message: Message, state: FSMContext):
     # Создаем клавиатуру с заявками
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     keyboard_buttons = []
-    for t in tickets[:10]:  # Показываем первые 10 заявок
+    page = 0
+    page_size = 10
+    page_items = tickets[page*page_size:(page+1)*page_size]
+    for t in page_items:
         keyboard_buttons.append([InlineKeyboardButton(
             text=f"#{t.id} • {t.problem_type} • {t.status}",
             callback_data=f"ticket_{t.id}"
         )])
-    
+    # Кнопка следующей страницы, если есть ещё
+    if len(tickets) > (page+1)*page_size:
+        keyboard_buttons.append([InlineKeyboardButton(
+            text="Следующие заявки", callback_data=f"tickets_next_{page+1}"
+        )])
+
     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
     await message.answer("Выберите заявку для изменения статуса:", reply_markup=keyboard)
     await state.set_state(StatusChangeState.choosing_ticket)
+
+@router.callback_query(F.data.startswith('tickets_next_'), StatusChangeState.choosing_ticket)
+async def tickets_next_page(callback: CallbackQuery, state: FSMContext):
+    user = await db.upsert_user(
+        telegram_id=callback.from_user.id,
+        username=callback.from_user.username,
+        full_name=callback.from_user.full_name
+    )
+    if user.role != 'specialist':
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+    try:
+        page = int(callback.data.split('_')[-1])
+    except Exception:
+        page = 0
+    tickets = await db.get_open_tickets_for_specialist_username(user.username or '')
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    page_size = 10
+    start = page * page_size
+    page_items = tickets[start:start+page_size]
+    if not page_items:
+        await callback.answer("Больше заявок нет")
+        return
+    keyboard_buttons = []
+    for t in page_items:
+        keyboard_buttons.append([InlineKeyboardButton(
+            text=f"#{t.id} • {t.problem_type} • {t.status}",
+            callback_data=f"ticket_{t.id}"
+        )])
+    if len(tickets) > (page+1)*page_size:
+        keyboard_buttons.append([InlineKeyboardButton(
+            text="Следующие заявки", callback_data=f"tickets_next_{page+1}"
+        )])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+    await callback.message.edit_reply_markup(reply_markup=keyboard)
 
 @router.callback_query(F.data.startswith('ticket_'), StatusChangeState.choosing_ticket)
 async def ticket_selected(callback: CallbackQuery, state: FSMContext):
